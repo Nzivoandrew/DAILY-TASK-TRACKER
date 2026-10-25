@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>DayForge</title>
+<style>
+:root{box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);
+--bg:#f6f5f3;--card:#fff;--line:#e4e2de;--text:#1f2124;--muted:#6b6e73;--red:#c8372d;--btn:#1f2124;--btnt:#fff}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){color-scheme:dark;--bg:#17181a;--card:#202225;--line:#33363a;--text:#f1f0ee;--muted:#a0a3a8;--btn:#f1f0ee;--btnt:#1f2124}}
+:root[data-theme="dark"]{color-scheme:dark;--bg:#17181a;--card:#202225;--line:#33363a;--text:#f1f0ee;--muted:#a0a3a8;--btn:#f1f0ee;--btnt:#1f2124}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:16px/1.5 ui-sans-serif,system-ui,"Segoe UI",Roboto,sans-serif}
+.wrap{max-width:720px;margin:0 auto;padding:16px}
+nav{display:flex;gap:6px;overflow-x:auto;padding:4px 0 12px}
+nav button{white-space:nowrap}
+button,input,select,textarea{font:inherit;color:inherit}
+button{cursor:pointer;border:1px solid var(--line);background:transparent;border-radius:10px;padding:0 14px;min-height:44px}
+button.p{background:var(--btn);color:var(--btnt);border-color:var(--btn);font-weight:600}
+button.r{background:var(--red);color:#fff;border-color:var(--red);font-weight:600}
+nav button[aria-current="page"]{background:var(--red);color:#fff;border-color:var(--red)}
+button.sm{min-height:36px;padding:0 10px;font-size:14px}
+input,select,textarea{width:100%;border:1px solid var(--line);background:var(--card);border-radius:10px;padding:10px 12px;min-height:44px}
+label{display:block;font-size:14px;margin-bottom:10px}
+label>input,label>select,label>textarea{margin-top:4px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px;margin-bottom:12px}
+.m{color:var(--muted);font-size:14px}
+h1{font-size:26px;margin:4px 0}h2{font-size:18px;margin:0 0 8px}
+.big{font-size:44px;font-weight:700;line-height:1.1}
+.bar{height:8px;border-radius:6px;background:var(--line);overflow:hidden;margin-top:10px}.bar i{display:block;height:100%;background:var(--red)}
+.row{display:flex;gap:8px;align-items:center;justify-content:space-between;flex-wrap:wrap}
+.grid{display:grid;gap:0 10px;grid-template-columns:1fr 1fr}
+.done{text-decoration:line-through;color:var(--muted)}
+.tag{font-size:12px;border:1px solid var(--line);border-radius:20px;padding:0 8px}
+.hi{border-color:var(--red);color:var(--red)}
+:focus-visible{outline:2px solid var(--red);outline-offset:2px}
+.scroll{overflow-x:auto}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+<div class="wrap">
+<div class="row"><b style="font-size:18px">DayForge</b><button class="sm" id="theme" aria-label="Switch light or dark theme">Theme</button></div>
+<nav id="nav" aria-label="Sections"></nav>
+<main id="app"></main>
+</div>
+<script>
+const KEY="dayforge-v1";
+const empty={tasks:[],habits:[],logs:{},reviews:{},goals:{}};
+let S;
+try{S=Object.assign({},empty,JSON.parse(localStorage.getItem(KEY)||"{}"))}catch(e){S={...empty}}
+let storageOk=true;
+function save(){try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){storageOk=false}}
+const W={high:3,medium:2,low:1};
+const $=s=>document.querySelector(s);
+const esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const iso=d=>d.toLocaleDateString("en-CA");
+const today=()=>iso(new Date());
+const uid=()=>Math.random().toString(36).slice(2,10);
+const back=n=>{const d=new Date();d.setDate(d.getDate()-n);return iso(d)};
+const dow=s=>new Date(s+"T12:00:00").getDay();
+
+/* scoring */
+function taskScores(list){
+  const el=list.filter(t=>t.status!=="deferred");
+  if(!el.length)return null;
+  const done=el.filter(t=>t.status==="completed");
+  const pts=l=>l.reduce((a,t)=>a+W[t.priority],0);
+  return{c:done.length,n:el.length,rate:done.length/el.length*100,w:pts(done)/pts(el)*100};
+}
+function habitRate(date){
+  const sch=S.habits.filter(h=>h.days.includes(dow(date)));
+  const counted=sch.filter(h=>(S.logs[h.id]||{})[date]!=="skipped");
+  if(!counted.length)return null;
+  return counted.filter(h=>(S.logs[h.id]||{})[date]==="done").length/counted.length*100;
+}
+function overall(date){
+  const t=taskScores(S.tasks.filter(x=>x.date===date)),h=habitRate(date),r=S.reviews[date];
+  const miss=[];if(!t)miss.push("tasks");if(h===null)miss.push("habits");if(!r)miss.push("daily review");
+  if(miss.length)return{miss};
+  return{v:t.w*.6+h*.25+100*.15};
+}
+function streak(h){
+  let n=0;
+  for(let i=0;i<365;i++){
+    const d=back(i);
+    if(!h.days.includes(dow(d)))continue;
+    const s=(S.logs[h.id]||{})[d];
+    if(s==="done")n++;else if(s==="skipped")continue;else if(i===0)continue;else break;
+  }
+  return n;
+}
+const pct=v=>v===null||v===undefined?"Not scored":Math.round(v)+"%";
+
+/* views */
+let view="today";
+const tabs=[["today","Today"],["tasks","Tasks"],["habits","Habits"],["review","Review"],["progress","Progress"],["backup","Backup"]];
+function nav(){$("#nav").innerHTML=tabs.map(([k,l])=>`<button data-go="${k}" ${k===view?'aria-current="page"':""}>${l}</button>`).join("")}
+function render(){nav();$("#app").innerHTML=({today:vToday,tasks:vTasks,habits:vHabits,review:vReview,progress:vProgress,backup:vBackup})[view]();save()}
+
+function taskRow(t){
+  return`<div class="card"><div class="row"><div><div class="${t.status==="completed"?"done":""}"><b>${esc(t.title)}</b></div>
+  <div class="m"><span class="tag ${t.priority==="high"?"hi":""}">${t.priority}</span> ${t.date||"No date"}${t.start?" · "+t.start+(t.end?"–"+t.end:""):""}${t.date&&t.date<today()&&t.status!=="completed"&&t.status!=="deferred"?" · Overdue":""}${t.status==="deferred"?" · Deferred":""}</div></div>
+  <div class="row"><button class="sm p" data-act="toggle" data-id="${t.id}">${t.status==="completed"?"Reopen":"Done"}</button>
+  <button class="sm" data-act="defer" data-id="${t.id}">${t.status==="deferred"?"Restore":"Tomorrow"}</button>
+  <button class="sm" data-act="deltask" data-id="${t.id}" aria-label="Delete ${esc(t.title)}">Delete</button></div></div></div>`;
+}
+function overlaps(list){
+  const t=list.filter(x=>x.start&&x.end&&x.status!=="deferred").sort((a,b)=>a.start.localeCompare(b.start));
+  for(let i=1;i<t.length;i++)if(t[i].start<t[i-1].end)return true;return false;
+}
+function vToday(){
+  const d=today(),list=S.tasks.filter(t=>t.date===d),s=taskScores(list),hr=habitRate(d),o=overall(d);
+  const h=new Date().getHours(),g=h<12?"Good morning":h<18?"Good afternoon":"Good evening";
+  const date=new Date().toLocaleDateString(undefined,{weekday:"long",month:"long",day:"numeric"});
+  const open=list.filter(t=>t.priority==="high"&&t.status!=="completed"&&t.status!=="deferred").length;
+  const due=S.tasks.filter(t=>t.date>d&&t.status!=="completed"&&t.date<=iso(new Date(Date.now()+7*864e5))).sort((a,b)=>a.date.localeCompare(b.date)).slice(0,3);
+  return`<h1>${g}</h1><p class="m">${date}</p>
+  <div class="card"><label>Main goal for today<input id="goal" value="${esc(S.goals[d]||"")}" placeholder="What would make today a good day?"></label></div>
+  <div class="card" aria-live="polite">${s?`<div class="big">${Math.round(s.rate)}%</div><div class="m">${s.c} of ${s.n} tasks done · weighted score ${Math.round(s.w)}% · ${open} high-priority left</div><div class="bar" role="progressbar" aria-valuenow="${Math.round(s.rate)}" aria-valuemin="0" aria-valuemax="100"><i style="width:${s.rate}%"></i></div>`
+  :`<h2>Not scored yet</h2><p class="m">Add a task for today and your progress will appear here.</p>`}
+  <p class="m" style="margin-bottom:0">Completion = done ÷ planned. Weighted counts High as 3, Medium 2, Low 1. Deferred tasks are left out.</p></div>
+  <div class="card"><h2>Daily score</h2>${o.miss?`<p class="m">Incomplete. Still needed: ${o.miss.join(", ")}.</p>`:`<div class="big">${Math.round(o.v)}</div>`}
+  <p class="m" style="margin-bottom:0">60% weighted tasks + 25% habits (${pct(hr)} today) + 15% daily review. Nothing is counted as zero when it’s missing.</p></div>
+  <button class="r" data-go="tasks">Add a task</button>
+  ${overlaps(list)?`<p role="alert" style="color:var(--red)">Some of today’s scheduled tasks overlap.</p>`:""}
+  <h2 style="margin-top:16px">Today’s tasks</h2>${list.length?list.map(taskRow).join(""):`<p class="m">Nothing planned today. Start with the one thing that matters most.</p>`}
+  ${due.length?`<h2>Coming up</h2>${due.map(t=>`<div class="m">${t.date} · ${esc(t.title)}</div>`).join("")}`:""}`;
+}
+function vTasks(){
+  const q=(vTasks.q||"").toLowerCase(),f=vTasks.f||"open";
+  let l=S.tasks.filter(t=>t.title.toLowerCase().includes(q));
+  if(f==="open")l=l.filter(t=>t.status!=="completed"&&t.status!=="deferred");
+  else if(f==="done")l=l.filter(t=>t.status==="completed");
+  else if(f==="overdue")l=l.filter(t=>t.date&&t.date<today()&&t.status!=="completed"&&t.status!=="deferred");
+  else if(f==="deferred")l=l.filter(t=>t.status==="deferred");
+  l.sort((a,b)=>(a.date||"9").localeCompare(b.date||"9")||W[b.priority]-W[a.priority]);
+  return`<h1>Tasks</h1><form id="tf" class="card"><label>Task<input name="title" required maxlength="120" placeholder="What needs doing?"></label>
+  <div class="grid"><label>Priority<select name="priority"><option value="high">High</option><option value="medium" selected>Medium</option><option value="low">Low</option></select></label>
+  <label>Date<input type="date" name="date" value="${today()}"></label>
+  <label>Start (optional)<input type="time" name="start"></label><label>End (optional)<input type="time" name="end"></label></div>
+  <p id="terr" class="m" role="alert" style="color:var(--red)"></p><button class="r" style="width:100%">Add task</button></form>
+  <div class="grid"><label>Search<input id="q" value="${esc(vTasks.q||"")}" placeholder="Search tasks"></label>
+  <label>Show<select id="f">${[["open","Open"],["overdue","Overdue"],["done","Completed"],["deferred","Deferred"],["all","All"]].map(([k,v])=>`<option value="${k}" ${k===f?"selected":""}>${v}</option>`).join("")}</select></label></div>
+  ${l.length?l.map(taskRow).join(""):`<p class="m">No tasks here yet. Only a title is required to add one.</p>`}`;
+}
+function vHabits(){
+  const d=today(),hr=habitRate(d),names=["S","M","T","W","T","F","S"];
+  const sch=S.habits.filter(h=>h.days.includes(dow(d)));
+  return`<h1>Habits</h1><p class="m">Today: ${pct(hr)} of scheduled habits done. Skipped habits are left out, so they never raise or lower your rate.</p>
+  <form id="hf" class="card"><label>New habit<input name="name" required maxlength="80" placeholder="e.g. Walk for 20 minutes"></label>
+  <fieldset style="border:0;padding:0;margin:0 0 10px"><legend class="m">Days</legend><div class="row" style="justify-content:flex-start">${names.map((n,i)=>`<label style="margin:0"><input type="checkbox" name="d" value="${i}" checked style="width:auto;min-height:auto"> ${["Sun","Mon","Tue","Wed","Thu","Fri","Sat"][i]}</label>`).join("")}</div></fieldset>
+  <button class="r">Add habit</button></form>
+  ${S.habits.length?"":`<div class="card"><p>Not sure where to start? Add a few common habits and edit them later.</p><button class="p" data-act="starter">Add starter habits</button></div>`}
+  ${S.habits.map(h=>{const s=(S.logs[h.id]||{})[d],on=h.days.includes(dow(d));
+  return`<div class="card"><div class="row"><div><b>${esc(h.name)}</b><div class="m">${h.days.length===7?"Every day":h.days.map(i=>["Sun","Mon","Tue","Wed","Thu","Fri","Sat"][i]).join(", ")} · streak ${streak(h)} · best ${h.best||0}</div></div>
+  <div class="row">${on?`<button class="sm ${s==="done"?"p":""}" data-act="hlog" data-id="${h.id}" data-s="done">${s==="done"?"Done ✓":"Mark done"}</button><button class="sm ${s==="skipped"?"p":""}" data-act="hlog" data-id="${h.id}" data-s="skipped">Skip</button>`:`<span class="m">Not scheduled today</span>`}
+  <button class="sm" data-act="delhabit" data-id="${h.id}" aria-label="Delete ${esc(h.name)}">Delete</button></div></div></div>`}).join("")}`;
+}
+function vReview(){
+  const d=today(),r=S.reviews[d]||{},s=taskScores(S.tasks.filter(t=>t.date===d));
+  const past=Object.keys(S.reviews).sort().reverse().filter(x=>x!==d).slice(0,5);
+  return`<h1>Daily review</h1><p class="m">Today’s task completion: ${s?Math.round(s.rate)+"%":"Not scored"}</p>
+  <form id="rf" class="card">
+  <label>Biggest win today<textarea name="win" rows="2">${esc(r.win)}</textarea></label>
+  <label>What distracted me?<textarea name="dist" rows="2">${esc(r.dist)}</textarea></label>
+  <label>What did I learn?<textarea name="learn" rows="2">${esc(r.learn)}</textarea></label>
+  <label>What could I have done better?<textarea name="better" rows="2">${esc(r.better)}</textarea></label>
+  <label>Energy level (1 = low, 5 = high)<select name="energy">${[1,2,3,4,5].map(n=>`<option ${+r.energy===n||(!r.energy&&n===3)?"selected":""}>${n}</option>`).join("")}</select></label>
+  <label>My three priorities for tomorrow<textarea name="next" rows="3">${esc(r.next)}</textarea></label>
+  <button class="r">Save review</button> <span class="m">${r.win!==undefined?"Saved":""}</span></form>
+  ${past.length?`<h2>Earlier reviews</h2>${past.map(k=>`<div class="card"><b>${k}</b> · energy ${S.reviews[k].energy}<div class="m">${esc(S.reviews[k].win)}</div></div>`).join("")}`:""}`;
+}
+function vProgress(){
+  const days=[...Array(7)].map((_,i)=>back(6-i)),W_=640,H=140;
+  const sc=days.map(d=>taskScores(S.tasks.filter(t=>t.date===d)));
+  const have=sc.filter(Boolean);
+  const bars=days.map((d,i)=>{const v=sc[i],x=20+i*88,h=v?v.rate/100*100:0;
+    return`<rect x="${x}" y="${110-h}" width="48" height="${h}" rx="4" fill="#c8372d"/><text x="${x+24}" y="128" text-anchor="middle" font-size="12" fill="currentColor">${["Su","Mo","Tu","We","Th","Fr","Sa"][dow(d)]}</text><text x="${x+24}" y="${v?104-h:104}" text-anchor="middle" font-size="12" fill="currentColor">${v?Math.round(v.rate)+"%":"–"}</text>`}).join("");
+  const best=have.length?days[sc.indexOf(have.reduce((a,b)=>a.rate>=b.rate?a:b))]:null;
+  const avg=have.length?have.reduce((a,b)=>a+b.rate,0)/have.length:null;
+  const weekTasks=S.tasks.filter(t=>days.includes(t.date));
+  const post=S.tasks.filter(t=>(t.postponed||0)>1);
+  const hs=days.map(habitRate).filter(x=>x!==null);
+  return`<h1>Progress</h1><div class="card"><h2>Last 7 days: task completion</h2><div class="scroll"><svg viewBox="0 0 ${W_} ${H}" width="100%" role="img" aria-label="Bar chart of daily task completion for the last 7 days" style="min-width:420px">${bars}</svg></div>
+  <p class="m">${have.length?`Based on ${have.length} day${have.length>1?"s":""} with planned tasks.`:"No data yet. Plan and complete tasks and your trend will appear here."}</p></div>
+  <div class="grid"><div class="card"><div class="m">Average completion</div><div class="big" style="font-size:28px">${avg===null?"Not scored":Math.round(avg)+"%"}</div></div>
+  <div class="card"><div class="m">Most productive day</div><div class="big" style="font-size:28px">${best?new Date(best+"T12:00:00").toLocaleDateString(undefined,{weekday:"long"}):"Not enough data"}</div></div>
+  <div class="card"><div class="m">Tasks done / planned</div><div class="big" style="font-size:28px">${weekTasks.filter(t=>t.status==="completed").length} / ${weekTasks.filter(t=>t.status!=="deferred").length}</div></div>
+  <div class="card"><div class="m">Habit completion</div><div class="big" style="font-size:28px">${hs.length?Math.round(hs.reduce((a,b)=>a+b,0)/hs.length)+"%":"Not scored"}</div></div></div>
+  ${post.length?`<div class="card"><h2>Often postponed</h2>${post.map(t=>`<div>${esc(t.title)} <span class="m">(${t.postponed}×)</span></div>`).join("")}</div>`:""}`;
+}
+function vBackup(){
+  return`<h1>Backup</h1><div class="card"><p>Everything is saved only in this browser, on this device. Clearing browser data erases it, so copy a backup now and then.</p>
+  <label>Your data<textarea id="bk" rows="6" readonly>${esc(JSON.stringify(S))}</textarea></label>
+  <button class="p" data-act="copy">Copy backup</button> <span id="cm" class="m"></span></div>
+  <div class="card"><label>Restore from a backup<textarea id="rs" rows="4" placeholder="Paste a backup here"></textarea></label><button data-act="restore">Restore</button> <span id="rm" class="m"></span></div>
+  <div class="card"><button data-act="wipe">Erase all data</button></div>`;
+}
+
+/* events */
+document.addEventListener("click",e=>{
+  const g=e.target.closest("[data-go]");if(g){view=g.dataset.go;render();window.scrollTo(0,0);return}
+  const b=e.target.closest("[data-act]");if(!b)return;
+  const {act,id,s}=b.dataset,t=S.tasks.find(x=>x.id===id);
+  if(act==="toggle"){t.status=t.status==="completed"?"not_started":"completed";t.done=t.status==="completed"?new Date().toISOString():null}
+  else if(act==="defer"){if(t.status==="deferred"){t.status="not_started"}else{t.status="deferred";const d=new Date(t.date||today()+"T12:00:00");const n=new Date((t.date||today())+"T12:00:00");n.setDate(n.getDate()+1);t.date=iso(n);t.postponed=(t.postponed||0)+1;t.status="not_started"}}
+  else if(act==="deltask"){if(!confirm("Delete this task? This can’t be undone."))return;S.tasks=S.tasks.filter(x=>x.id!==id)}
+  else if(act==="hlog"){const l=S.logs[id]=S.logs[id]||{};const d=today();if(l[d]===s)delete l[d];else l[d]=s;const h=S.habits.find(x=>x.id===id);h.best=Math.max(h.best||0,streak(h))}
+  else if(act==="delhabit"){if(!confirm("Delete this habit and its history?"))return;S.habits=S.habits.filter(x=>x.id!==id);delete S.logs[id]}
+  else if(act==="starter"){["Wake up at the planned time","Exercise or walk","Read or learn for 20 minutes","Work on my most important goal","Drink enough water","Limit unnecessary scrolling","Plan tomorrow before bed"].forEach(n=>S.habits.push({id:uid(),name:n,days:[0,1,2,3,4,5,6],best:0}))}
+  else if(act==="copy"){const x=$("#bk");x.select();try{navigator.clipboard.writeText(x.value).then(()=>$("#cm").textContent="Copied.",()=>$("#cm").textContent="Select the text above and copy it.")}catch(_){$("#cm").textContent="Select the text above and copy it."}return}
+  else if(act==="restore"){try{const o=JSON.parse($("#rs").value);if(!Array.isArray(o.tasks)||!Array.isArray(o.habits))throw 0;S=Object.assign({},empty,o);save();render();return}catch(_){$("#rm").textContent="That doesn’t look like a DayForge backup.";return}}
+  else if(act==="wipe"){if(!confirm("Erase everything? This can’t be undone."))return;S={...empty,tasks:[],habits:[],logs:{},reviews:{},goals:{}}}
+  render();
+});
+document.addEventListener("submit",e=>{
+  e.preventDefault();const f=e.target,d=Object.fromEntries(new FormData(f));
+  if(f.id==="tf"){
+    const title=(d.title||"").trim();
+    if(!title){$("#terr").textContent="Enter a task title.";return}
+    if(d.start&&d.end&&d.end<=d.start){$("#terr").textContent="End time must be after the start time.";return}
+    S.tasks.push({id:uid(),title,priority:d.priority,date:d.date||today(),start:d.start||"",end:d.end||"",status:"not_started",created:new Date().toISOString()});
+  }else if(f.id==="hf"){
+    const days=[...f.querySelectorAll("[name=d]:checked")].map(x=>+x.value);
+    if(!d.name.trim()||!days.length)return;
+    S.habits.push({id:uid(),name:d.name.trim(),days,best:0});
+  }else if(f.id==="rf"){
+    S.reviews[today()]={win:d.win,dist:d.dist,learn:d.learn,better:d.better,energy:+d.energy,next:d.next};
+  }
+  render();
+});
+document.addEventListener("input",e=>{
+  if(e.target.id==="goal"){S.goals[today()]=e.target.value;save()}
+  if(e.target.id==="q"){vTasks.q=e.target.value;const p=e.target.selectionStart;render();const q=$("#q");q.focus();q.setSelectionRange(p,p)}
+});
+document.addEventListener("change",e=>{if(e.target.id==="f"){vTasks.f=e.target.value;render()}});
+$("#theme").onclick=()=>{const r=document.documentElement;const dark=r.dataset.theme?r.dataset.theme==="dark":matchMedia("(prefers-color-scheme:dark)").matches;r.dataset.theme=dark?"light":"dark";try{localStorage.setItem(KEY+"-theme",r.dataset.theme)}catch(_){}};
+try{const t=localStorage.getItem(KEY+"-theme");if(t)document.documentElement.dataset.theme=t}catch(_){}
+render();
+</script>
+</body>
+</html>
